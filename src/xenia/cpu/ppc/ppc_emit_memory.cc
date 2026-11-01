@@ -13,6 +13,7 @@
 #include "xenia/base/assert.h"
 #include "xenia/base/cvar.h"
 #include "xenia/cpu/ppc/ppc_context.h"
+#include "xenia/cpu/ppc/ppc_frontend.h"
 #include "xenia/cpu/ppc/ppc_hir_builder.h"
 
 DEFINE_bool(
@@ -725,23 +726,77 @@ int InstrEmit_lmw(PPCHIRBuilder& f, const InstrData& i) {
 // Integer load and store string (A-17)
 
 int InstrEmit_lswi(PPCHIRBuilder& f, const InstrData& i) {
-  XEINSTRNOTIMPLEMENTED();
-  return 1;
+  Value* ea = (i.X.RA == 0) ? f.LoadZeroInt64() : f.LoadGPR(i.X.RA);
+  uint32_t nb = i.X.RB ? i.X.RB : 32;
+  uint32_t rt = i.X.RT;
+  uint32_t byte_idx = 0;
+  while (byte_idx < nb) {
+    uint32_t rem = nb - byte_idx;
+    Value* reg_val;
+    if (rem >= 4) {
+      Value* offset = f.LoadConstantInt64(byte_idx);
+      reg_val = f.ZeroExtend(f.ByteSwap(f.LoadOffset(ea, offset, INT32_TYPE)),
+                             INT64_TYPE);
+      byte_idx += 4;
+    } else {
+      reg_val = f.LoadZeroInt64();
+      for (uint32_t b = 0; b < rem; ++b) {
+        Value* offset = f.LoadConstantInt64(byte_idx + b);
+        Value* byte_val =
+            f.ZeroExtend(f.LoadOffset(ea, offset, INT8_TYPE), INT64_TYPE);
+        reg_val =
+            f.Or(reg_val, f.Shl(byte_val, static_cast<int8_t>(24 - b * 8)));
+      }
+      byte_idx += rem;
+    }
+    f.StoreGPR(rt, reg_val);
+    rt = (rt + 1) & 31;
+  }
+  return 0;
 }
 
 int InstrEmit_lswx(PPCHIRBuilder& f, const InstrData& i) {
-  XEINSTRNOTIMPLEMENTED();
-  return 1;
+  Value* ea = f.Truncate(CalculateEA_0(f, i.X.RA, i.X.RB), INT32_TYPE);
+  f.StoreContext(offsetof(PPCContext, scratch) + 0, ea);
+  f.StoreContext(offsetof(PPCContext, scratch) + 4,
+                 f.LoadConstantUint32(i.X.RT));
+  f.CallExtern(f.builtins()->lswx_handler);
+  return 0;
 }
 
 int InstrEmit_stswi(PPCHIRBuilder& f, const InstrData& i) {
-  XEINSTRNOTIMPLEMENTED();
-  return 1;
+  Value* ea = (i.X.RA == 0) ? f.LoadZeroInt64() : f.LoadGPR(i.X.RA);
+  uint32_t nb = i.X.RB ? i.X.RB : 32;
+  uint32_t rs = i.X.RT;
+  uint32_t byte_idx = 0;
+  while (byte_idx < nb) {
+    uint32_t rem = nb - byte_idx;
+    Value* reg_val = f.Truncate(f.LoadGPR(rs), INT32_TYPE);
+    if (rem >= 4) {
+      Value* offset = f.LoadConstantInt64(byte_idx);
+      f.StoreOffset(ea, offset, f.ByteSwap(reg_val));
+      byte_idx += 4;
+    } else {
+      for (uint32_t b = 0; b < rem; ++b) {
+        Value* offset = f.LoadConstantInt64(byte_idx + b);
+        Value* byte_val = f.Truncate(
+            f.Shr(reg_val, static_cast<int8_t>(24 - b * 8)), INT8_TYPE);
+        f.StoreOffset(ea, offset, byte_val);
+      }
+      byte_idx += rem;
+    }
+    rs = (rs + 1) & 31;
+  }
+  return 0;
 }
 
 int InstrEmit_stswx(PPCHIRBuilder& f, const InstrData& i) {
-  XEINSTRNOTIMPLEMENTED();
-  return 1;
+  Value* ea = f.Truncate(CalculateEA_0(f, i.X.RA, i.X.RB), INT32_TYPE);
+  f.StoreContext(offsetof(PPCContext, scratch) + 0, ea);
+  f.StoreContext(offsetof(PPCContext, scratch) + 4,
+                 f.LoadConstantUint32(i.X.RT));
+  f.CallExtern(f.builtins()->stswx_handler);
+  return 0;
 }
 
 // Memory synchronization (A-18)

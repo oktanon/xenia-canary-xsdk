@@ -361,18 +361,34 @@ uint32_t GraphicsSystem::ReadRegister(uint32_t addr) {
   uint32_t r = (addr & 0xFFFF) / 4;
 
   switch (r) {
+    case 0x0399:    // RBBM_PERFCOUNTER1_LOW (xsdk 500 MHz GPU clock low)
+    case 0x039A: {  // RBBM_PERFCOUNTER1_HI  (xsdk 500 MHz GPU clock high)
+      uint64_t host_ticks = Clock::QueryHostTickCount();
+      uint64_t host_freq = Clock::QueryHostTickFrequency();
+      uint64_t gpu_ticks =
+          host_freq ? ((host_ticks / host_freq) * 500000000ULL +
+                       ((host_ticks % host_freq) * 500000000ULL) / host_freq)
+                    : host_ticks;
+      gpu_ticks &= 0xFFFFFFFFFFFFULL;
+      register_file()->values[0x0399] = static_cast<uint32_t>(gpu_ticks);
+      register_file()->values[0x039A] = static_cast<uint32_t>(gpu_ticks >> 32);
+      return register_file()->values[r];
+    }
     case 0x0F00:  // RB_EDRAM_TIMING
       return 0x08100748;
     case 0x0F01:  // RB_BC_CONTROL
       return 0x0000200E;
     case 0x0F2D:  // RB_HSIO_INTERFACE_ALIGNER_VALUE
       return 0x00BBBBBB;
+    case 0x194C:  // AVIVO_D1MODE_V_COUNTER (xsdk wait_for_scaler / on_interrupt)
+      return 0x000003C0;  // 960 (vblank line past both 720p and 960p letterbox)
     case 0x1951:  // interrupt status
       return 1;   // vblank
     case 0x1961:  // AVIVO_D1MODE_VIEWPORT_SIZE
                   // Screen res - 1280x720
                   // maximum [width(0x0FFF), height(0x0FFF)]
-      return 0x050002D0;
+      return register_file()->values[r] ? uint32_t(register_file()->values[r])
+                                        : 0x050002D0u;
     default:
       if (!register_file()->IsValidRegister(r)) {
         XELOGE("GPU: Read from unknown register ({:04X})", r);
@@ -394,10 +410,30 @@ void GraphicsSystem::WriteRegister(uint32_t addr, uint32_t value) {
       break;
     case 0x0F2D:  // RB_HSIO_INTERFACE_ALIGNER_VALUE
       break;
+    case 0x183B:  // AVIVO_D1CRTC_DOUBLE_BUFFER_CONTROL (xsdk apply/flip)
+      if (value != 0 && command_processor_) {
+        auto& regs = register_file()->values;
+        uint32_t fb_ptr = regs[0x1844];
+        uint32_t fb_width = regs[0x184D] ? uint32_t(regs[0x184D]) : 1280u;
+        uint32_t fb_height = regs[0x184E] ? uint32_t(regs[0x184E]) : 720u;
+        uint32_t fb_pitch = regs[0x1848] ? uint32_t(regs[0x1848]) : fb_width;
+        bool is_tiled = (regs[0x1841] & (1u << 20)) != 0;
+        command_processor_->IssueDirectSwap(fb_ptr, fb_width, fb_height,
+                                            fb_pitch, is_tiled);
+        value = 0;  // Immediately clear double-buffer pending bit for xsdk
+      }
+      break;
     case 0x1844:  // AVIVO_D1GRPH_PRIMARY_SURFACE_ADDRESS
       break;
+    case 0x1928:  // AVIVO_DC_LUT_AUTOFILL (xsdk fill_lut)
+      if (value & 1u) {
+        value |= 2u;  // Immediately set AUTOFILL_DONE (bit 1) for xsdk
+      }
+      break;
     default:
-      XELOGW("Unknown GPU register {:04X} write: {:08X}", r, value);
+      if (!register_file()->IsValidRegister(r)) {
+        XELOGW("Unknown GPU register {:04X} write: {:08X}", r, value);
+      }
       break;
   }
 

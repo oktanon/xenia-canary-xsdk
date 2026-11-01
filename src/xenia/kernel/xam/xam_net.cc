@@ -24,8 +24,10 @@
 // NOTE: must be included last as it expects windows.h to already be included.
 #define _WINSOCK_DEPRECATED_NO_WARNINGS  // inet_addr
 #include <winsock2.h>                    // NOLINT(build/include_order)
+#include <ws2tcpip.h>                    // NOLINT(build/include_order)
 #else
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <sys/select.h>
@@ -605,11 +607,32 @@ DECLARE_XAM_EXPORT1(NetDll_XNetGetEthernetLinkStatus, kNetworking, kStub);
 dword_result_t NetDll_XNetDnsLookup_entry(dword_t caller, lpstring_t host,
                                           dword_t event_handle,
                                           lpdword_t pdns) {
-  // TODO(gibbed): actually implement this
   if (pdns) {
     auto dns_guest = kernel_memory()->SystemHeapAlloc(sizeof(XNDNS));
     auto dns = kernel_memory()->TranslateVirtual<XNDNS*>(dns_guest);
-    dns->status = 1;  // non-zero = error
+    std::memset(dns, 0, sizeof(XNDNS));
+    if (host) {
+      addrinfo hints = {};
+      hints.ai_family = AF_INET;
+      addrinfo* res = nullptr;
+      if (getaddrinfo(host.value().c_str(), nullptr, &hints, &res) == 0 &&
+          res != nullptr) {
+        uint32_t count = 0;
+        for (addrinfo* p = res; p != nullptr && count < 8; p = p->ai_next) {
+          if (p->ai_family == AF_INET && p->ai_addr != nullptr) {
+            auto* sin = reinterpret_cast<sockaddr_in*>(p->ai_addr);
+            dns->aina[count++] = sin->sin_addr;
+          }
+        }
+        dns->cina = count;
+        dns->status = (count > 0) ? 0 : int32_t(X_WSAError::X_WSAHOST_NOT_FOUND);
+        freeaddrinfo(res);
+      } else {
+        dns->status = int32_t(X_WSAError::X_WSAHOST_NOT_FOUND);
+      }
+    } else {
+      dns->status = int32_t(X_WSAError::X_WSAEINVAL);
+    }
     *pdns = dns_guest;
   }
   if (event_handle) {
@@ -620,7 +643,7 @@ dword_result_t NetDll_XNetDnsLookup_entry(dword_t caller, lpstring_t host,
   }
   return 0;
 }
-DECLARE_XAM_EXPORT1(NetDll_XNetDnsLookup, kNetworking, kStub);
+DECLARE_XAM_EXPORT1(NetDll_XNetDnsLookup, kNetworking, kImplemented);
 
 dword_result_t NetDll_XNetDnsRelease_entry(dword_t caller,
                                            pointer_t<XNDNS> dns) {
@@ -1181,6 +1204,28 @@ dword_result_t NetDll_getsockname_entry(dword_t caller, dword_t socket_handle,
   return 0;
 }
 DECLARE_XAM_EXPORT1(NetDll_getsockname, kNetworking, kImplemented);
+
+dword_result_t NetDll_getpeername_entry(dword_t caller, dword_t socket_handle,
+                                        lpvoid_t buf_ptr, lpdword_t len_ptr) {
+  auto socket =
+      kernel_state()->object_table()->LookupObject<XSocket>(socket_handle);
+  if (!socket) {
+    XThread::SetLastError(uint32_t(X_WSAError::X_WSAENOTSOCK));
+    return -1;
+  }
+
+  int buffer_len = *len_ptr;
+
+  X_STATUS status = socket->GetPeerName(buf_ptr, &buffer_len);
+  if (XFAILED(status)) {
+    XThread::SetLastError(socket->GetLastWSAError());
+    return -1;
+  }
+
+  *len_ptr = buffer_len;
+  return 0;
+}
+DECLARE_XAM_EXPORT1(NetDll_getpeername, kNetworking, kImplemented);
 
 dword_result_t NetDll_XNetCreateKey_entry(dword_t caller, lpdword_t key_id,
                                           lpdword_t exchange_key) {

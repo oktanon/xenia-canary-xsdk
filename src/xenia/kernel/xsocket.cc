@@ -354,6 +354,24 @@ X_STATUS XSocket::GetSockName(uint8_t* buf, int* buf_len) {
   }
 
   std::memcpy(buf, &sa, *buf_len);
+  if (*buf_len >= 2) {
+    xe::store_and_swap<uint16_t>(buf, sa.sa_family);
+  }
+  return X_STATUS_SUCCESS;
+}
+
+X_STATUS XSocket::GetPeerName(uint8_t* buf, int* buf_len) {
+  struct sockaddr sa = {};
+
+  int ret = getpeername(native_handle_, &sa, (socklen_t*)buf_len);
+  if (ret < 0) {
+    return X_STATUS_UNSUCCESSFUL;
+  }
+
+  std::memcpy(buf, &sa, *buf_len);
+  if (*buf_len >= 2) {
+    xe::store_and_swap<uint16_t>(buf, sa.sa_family);
+  }
   return X_STATUS_SUCCESS;
 }
 

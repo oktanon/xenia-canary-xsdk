@@ -94,6 +94,7 @@ node_modules/.bin/
 /build/
 /build-arm64/
 /build-x64/
+/test_game/
 
 # ==============================================================================
 # Local-only paths

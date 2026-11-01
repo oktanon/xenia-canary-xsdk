@@ -3170,6 +3170,9 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
                   guest_bytes[i] = after_bytes[i];
                 }
               }
+              shared_memory_->MakeRangeValid(
+                  memexport_range.base_address_dwords << 2,
+                  memexport_range.size_bytes, true);
               before_bytes += memexport_range.size_bytes;
               after_bytes += memexport_range.size_bytes;
             }
@@ -3643,12 +3646,17 @@ bool VulkanCommandProcessor::IssueCopy() {
         memory::vastcpy(memory_->TranslatePhysical(written_address),
                         static_cast<uint8_t*>(mapped_data), readback_length);
         dfn.vkUnmapMemory(device, rb.memories[read_index]);
+        if (!is_scaled) {
+          shared_memory_->MakeRangeValid(written_address, readback_length,
+                                         true);
+        }
       } else {
         XELOGE(
             "VulkanCommandProcessor: Failed to map readback buffer memory for "
             "resolve");
       }
     }
+    rb.current_index = 1 - write_index;
   }
 
   return true;

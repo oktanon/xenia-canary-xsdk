@@ -79,7 +79,7 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
-    occlusion_query_viz, false,
+    occlusion_query_viz, true,
     "Enables VIZ_QUERY (VIZ) visibility tests for draws with a VIZ token. "
     "VIZ is the 360's version of conditional rendering / predication queries.\n"
     "Titles mostly use it to combat overdraw, but it can also be used for "
@@ -92,7 +92,7 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_string(
-    readback_resolve, "none",
+    readback_resolve, "full",
     "Controls CPU readback of render-to-texture resolve results.\n"
     " fast: Read from previous frame (1 frame delay, no GPU stall, slight "
     "performance hit)\n"
@@ -100,7 +100,7 @@ DEFINE_string(
     " none: Disable readback completely (some games render better without it)",
     "GPU");
 
-UPDATE_from_string(readback_resolve, 2025, 12, 4, 21, "fast");
+UPDATE_from_string(readback_resolve, 2026, 11, 1, 1, "full");
 
 DEFINE_bool(
     readback_resolve_half_pixel_offset, false,
@@ -117,7 +117,7 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
-    readback_memexport, false,
+    readback_memexport, true,
     "Read data written by memory export in shaders on the CPU. "
     "This may be needed in some games (but many only access exported data on "
     "the GPU, and this flag isn't needed to handle such behavior), but causes "
@@ -338,12 +338,65 @@ void CommandProcessor::RestoreGammaRamp(
 }
 
 void CommandProcessor::CallInThread(std::function<void()> fn) {
-  if (pending_fns_.empty() &&
-      kernel::XThread::IsInThread(worker_thread_.get())) {
-    fn();
-  } else {
+  bool in_worker = kernel::XThread::IsInThread(worker_thread_.get());
+  {
+    std::lock_guard<std::mutex> lock(pending_fns_mutex_);
+    if (pending_fns_.empty() && in_worker) {
+      fn();
+      return;
+    }
     pending_fns_.push(std::move(fn));
   }
+  if (!in_worker && write_ptr_index_event_) {
+    write_ptr_index_event_->Set();
+  }
+}
+
+void CommandProcessor::IssueDirectSwap(uint32_t frontbuffer_ptr,
+                                       uint32_t frontbuffer_width,
+                                       uint32_t frontbuffer_height,
+                                       uint32_t frontbuffer_pitch,
+                                       bool is_linear) {
+  if (pm4_swap_active_.load(std::memory_order_relaxed)) {
+    return;
+  }
+  uint32_t phys_addr = frontbuffer_ptr & 0x1FFFFFFFu;
+  if (!phys_addr || !frontbuffer_width || !frontbuffer_height) {
+    return;
+  }
+  uint32_t pitch = frontbuffer_pitch ? frontbuffer_pitch : frontbuffer_width;
+  CallInThread([this, phys_addr, frontbuffer_width, frontbuffer_height, pitch,
+                is_linear]() {
+    if (pm4_swap_active_.load(std::memory_order_relaxed)) {
+      return;
+    }
+    uint32_t saved_fetch[6];
+    for (uint32_t i = 0; i < 6; ++i) {
+      saved_fetch[i] =
+          register_file_->values[XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 + i];
+    }
+    xenos::xe_gpu_texture_fetch_t fetch = {};
+    fetch.type = xenos::FetchConstantType::kTexture;
+    fetch.pitch = xe::align(pitch, 32u) >> 5;
+    fetch.tiled = is_linear ? 0 : 1;
+    fetch.format = xenos::TextureFormat::k_8_8_8_8;
+    fetch.endianness = xenos::Endian::k8in32;
+    fetch.base_address = phys_addr >> 12;
+    fetch.size_2d.width = frontbuffer_width - 1;
+    fetch.size_2d.height = frontbuffer_height - 1;
+    fetch.swizzle = XE_GPU_MAKE_TEXTURE_SWIZZLE(B, G, R, A);
+    fetch.dimension = xenos::DataDimension::k2DOrStacked;
+    WriteRegister(XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 + 0, fetch.dword_0);
+    WriteRegister(XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 + 1, fetch.dword_1);
+    WriteRegister(XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 + 2, fetch.dword_2);
+    WriteRegister(XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 + 3, fetch.dword_3);
+    WriteRegister(XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 + 4, fetch.dword_4);
+    WriteRegister(XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 + 5, fetch.dword_5);
+    IssueSwap(phys_addr, frontbuffer_width, frontbuffer_height);
+    for (uint32_t i = 0; i < 6; ++i) {
+      WriteRegister(XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 + i, saved_fetch[i]);
+    }
+  });
 }
 
 void CommandProcessor::ClearCaches() {}
@@ -366,9 +419,16 @@ void CommandProcessor::WorkerThreadMain() {
   }
 
   while (worker_running_) {
-    while (!pending_fns_.empty()) {
-      auto fn = std::move(pending_fns_.front());
-      pending_fns_.pop();
+    for (;;) {
+      std::function<void()> fn;
+      {
+        std::lock_guard<std::mutex> lock(pending_fns_mutex_);
+        if (pending_fns_.empty()) {
+          break;
+        }
+        fn = std::move(pending_fns_.front());
+        pending_fns_.pop();
+      }
       fn();
     }
 
@@ -380,6 +440,10 @@ void CommandProcessor::WorkerThreadMain() {
       // event is too high.
       PrepareForWait();
       uint32_t loop_count = 0;
+      auto has_pending_fns = [this]() {
+        std::lock_guard<std::mutex> lock(pending_fns_mutex_);
+        return !pending_fns_.empty();
+      };
       do {
         // If we spin around too much, revert to a "low-power" state.
         if (loop_count > 500) {
@@ -396,11 +460,11 @@ void CommandProcessor::WorkerThreadMain() {
         }
         loop_count++;
         write_ptr_index = write_ptr_index_.load();
-      } while (worker_running_ && pending_fns_.empty() &&
+      } while (worker_running_ && !has_pending_fns() &&
                (write_ptr_index == 0xBAADF00D ||
                 read_ptr_index_ == write_ptr_index));
       ReturnFromWait();
-      if (!worker_running_ || !pending_fns_.empty()) {
+      if (!worker_running_ || has_pending_fns()) {
         continue;
       }
     }
@@ -487,6 +551,7 @@ void CommandProcessor::ShutdownContext() {
 }
 
 void CommandProcessor::InitializeRingBuffer(uint32_t ptr, uint32_t size_log2) {
+  pm4_swap_active_.store(false, std::memory_order_relaxed);
   read_ptr_index_ = 0;
   primary_buffer_ptr_ = ptr;
   primary_buffer_size_ = uint32_t(1) << (size_log2 + 3);
@@ -888,6 +953,12 @@ void CommandProcessor::MakeCoherent() {
   // TODO(benvanik): notify resource cache of base->size and type.
   XELOGGPU("Make {:08X} -> {:08X} ({}b) coherent, action = {}", base_host,
            base_host + size_host, size_host, action);
+
+  if ((status_host.vc_action_ena || status_host.tc_action_ena) &&
+      !status_host.dest_base_0_ena && size_host != 0 &&
+      size_host < 0x20000000) {
+    TracePlaybackWroteMemory(base_host & 0x1FFFFFFFu, size_host);
+  }
 
   // Mark coherent.
   regs_volatile[XE_GPU_REG_COHER_STATUS_HOST] = 0;

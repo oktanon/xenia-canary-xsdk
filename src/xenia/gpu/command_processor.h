@@ -20,6 +20,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "xenia/base/clock.h"
 #include "xenia/base/math.h"
 #include "xenia/base/ring_buffer.h"
 #include "xenia/gpu/register_file.h"
@@ -150,6 +151,16 @@ class CommandProcessor {
   // for instance).
   virtual void IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontbuffer_width,
                          uint32_t frontbuffer_height) {}
+
+  void IssueDirectSwap(uint32_t frontbuffer_ptr, uint32_t frontbuffer_width,
+                       uint32_t frontbuffer_height, uint32_t frontbuffer_pitch,
+                       bool is_linear);
+  bool pm4_swap_active() const {
+    return pm4_swap_active_.load(std::memory_order_relaxed);
+  }
+  void set_pm4_swap_active(bool value) {
+    pm4_swap_active_.store(value, std::memory_order_relaxed);
+  }
 
   // May be called not only from the command processor thread when the command
   // processor is paused, and the termination of this function may be explicitly
@@ -604,7 +615,9 @@ class CommandProcessor {
   std::atomic<bool> worker_running_;
   kernel::object_ref<kernel::XHostThread> worker_thread_;
 
+  std::mutex pending_fns_mutex_;
   std::queue<std::function<void()>> pending_fns_;
+  std::atomic<bool> pm4_swap_active_{false};
 
   // MicroEngine binary from PM4_ME_INIT
   std::vector<uint32_t> me_bin_;

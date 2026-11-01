@@ -1054,6 +1054,20 @@ dword_result_t XamUpdateGetCurrentSystemVersion_entry() {
 }
 DECLARE_XAM_EXPORT1(XamUpdateGetCurrentSystemVersion, kNone, kStub);
 
+dword_result_t GetTimeZoneInformation_entry(lpvoid_t tzi_ptr) {
+  if (tzi_ptr) {
+    std::memset(tzi_ptr, 0, 172);  // sizeof(TIME_ZONE_INFORMATION)
+    xe::store_and_swap<uint16_t>(tzi_ptr + 4, u'U');
+    xe::store_and_swap<uint16_t>(tzi_ptr + 6, u'T');
+    xe::store_and_swap<uint16_t>(tzi_ptr + 8, u'C');
+    xe::store_and_swap<uint16_t>(tzi_ptr + 88, u'U');
+    xe::store_and_swap<uint16_t>(tzi_ptr + 90, u'T');
+    xe::store_and_swap<uint16_t>(tzi_ptr + 92, u'C');
+  }
+  return 0;  // TIME_ZONE_ID_UNKNOWN
+}
+DECLARE_XAM_EXPORT1(GetTimeZoneInformation, kNone, kImplemented);
+
 }  // namespace xam
 }  // namespace kernel
 }  // namespace xe

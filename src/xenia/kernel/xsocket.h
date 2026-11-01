@@ -24,6 +24,7 @@ enum class X_WSAError : uint32_t {
   X_WSAEINVAL = 0x2726,
   X_WSAENOTSOCK = 0x2736,
   X_WSAEMSGSIZE = 0x2738,
+  X_WSAHOST_NOT_FOUND = 0x2AF9,
 };
 
 struct XSOCKADDR {
@@ -118,6 +119,7 @@ class XSocket : public XObject {
   X_STATUS Bind(N_XSOCKADDR_IN* name, int name_len);
   X_STATUS Listen(int backlog);
   X_STATUS GetSockName(uint8_t* buf, int* buf_len);
+  X_STATUS GetPeerName(uint8_t* buf, int* buf_len);
   object_ref<XSocket> Accept(N_XSOCKADDR* name, int* name_len);
   int Shutdown(int how);
 

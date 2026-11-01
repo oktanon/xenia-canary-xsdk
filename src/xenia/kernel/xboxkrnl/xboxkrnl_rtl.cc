@@ -857,6 +857,17 @@ void RtlGetStackLimits_entry(lpdword_t out_end, lpdword_t out_base,
 }
 DECLARE_XBOXKRNL_EXPORT1(RtlGetStackLimits, kNone, kImplemented);
 
+void RtlSetVectoredExceptionHandler_entry(dword_t first, dword_t handler_ptr) {
+  XELOGD("RtlSetVectoredExceptionHandler({}, {:08X})", uint32_t(first),
+         uint32_t(handler_ptr));
+}
+DECLARE_XBOXKRNL_EXPORT1(RtlSetVectoredExceptionHandler, kNone, kStub);
+
+void RtlClearVectoredExceptionHandler_entry() {
+  XELOGD("RtlClearVectoredExceptionHandler()");
+}
+DECLARE_XBOXKRNL_EXPORT1(RtlClearVectoredExceptionHandler, kNone, kStub);
+
 }  // namespace xboxkrnl
 }  // namespace kernel
 }  // namespace xe

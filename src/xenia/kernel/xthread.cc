@@ -688,7 +688,7 @@ void XThread::RundownAPCs() {
   xboxkrnl::xeRundownApcs(thread_state_->context());
 }
 
-int32_t XThread::QueryPriority() { return thread_->priority(); }
+int32_t XThread::QueryPriority() { return priority_; }
 
 // Map Xenon's 0-31 priority range across the available host priority levels.
 // Priority 18 (0x12) is the Xenon real-time threshold — threads at or above

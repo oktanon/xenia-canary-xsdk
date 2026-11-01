@@ -1098,6 +1098,7 @@ XE_GPU_REGISTER(0x1925, kDword, DC_LUT_30_COLOR)
 // Bit 2 - red write enable mask.
 // Default: 0x00000007 (though 0x0000003F on the M56 where there are two pipes).
 XE_GPU_REGISTER(0x1927, kDword, DC_LUT_WRITE_EN_MASK)
+XE_GPU_REGISTER(0x1928, kDword, DC_LUT_AUTOFILL)
 
 // Single set of parameters for all channels apparently unlike on the M56
 // (4D5307E6 sets DC_LUTA_CONTROL to 0x00000003 for the data increment of 8 in

@@ -408,6 +408,8 @@ typedef struct alignas(64) PPCContext_s {
 
   // Thread ID assigned to this context.
   uint32_t thread_id;
+  // Low 7 bits of XER (byte count for lswx/stswx).
+  uint8_t xer_byte_count;
 
   // Global interrupt lock, held while interrupts are disabled or interrupts are
   // executing. This is shared among all threads and comes from the processor.
@@ -435,8 +437,7 @@ typedef struct alignas(64) PPCContext_s {
     static_assert(std::is_pointer_v<T>);
     uint8_t* host_address = virtual_membase + guest_address;
 #if XE_PLATFORM_WIN32 == 1
-    if (guest_address >=
-        static_cast<uint32_t>(reinterpret_cast<uintptr_t>(this))) {
+    if (guest_address >= 0xE0000000) {
       host_address += 0x1000;
     }
 #endif
@@ -464,7 +465,7 @@ typedef struct alignas(64) PPCContext_s {
     uint32_t guest_tmp = static_cast<uint32_t>(
         reinterpret_cast<const uint8_t*>(host_ptr) - virtual_membase);
 #if XE_PLATFORM_WIN32 == 1
-    if (guest_tmp >= static_cast<uint32_t>(reinterpret_cast<uintptr_t>(this))) {
+    if (guest_tmp >= 0xE0000000) {
       guest_tmp -= 0x1000;
     }
 #endif

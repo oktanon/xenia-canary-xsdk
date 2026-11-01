@@ -3298,6 +3298,9 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type,
                   guest_bytes[i] = after_bytes[i];
                 }
               }
+              shared_memory_->MakeRangeValid(
+                  memexport_range.base_address_dwords << 2,
+                  memexport_range.size_bytes, true);
               before_bytes += memexport_range.size_bytes;
               after_bytes += memexport_range.size_bytes;
             }
@@ -3638,8 +3641,12 @@ bool D3D12CommandProcessor::IssueCopy_ReadbackResolvePath() {
       memory::vastcpy(physaddr, (uint8_t*)readback_mapping, readback_length);
       D3D12_RANGE readback_write_range = {};
       read_source->Unmap(0, &readback_write_range);
+      if (!is_scaled) {
+        shared_memory_->MakeRangeValid(written_address, readback_length, true);
+      }
     }
   }
+  rb.current_index = 1 - write_index;
   return true;
 }
 

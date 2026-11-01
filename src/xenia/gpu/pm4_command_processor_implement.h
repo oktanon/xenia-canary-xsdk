@@ -682,6 +682,7 @@ bool COMMAND_PROCESSOR::ExecutePacketType3_XE_SWAP(uint32_t packet,
   uint32_t frontbuffer_height = reader_.ReadAndSwap<uint32_t>();
   reader_.AdvanceRead((count - 4) * sizeof(uint32_t));
 
+  set_pm4_swap_active(true);
   COMMAND_PROCESSOR::IssueSwap(frontbuffer_ptr, frontbuffer_width,
                                frontbuffer_height);
 
@@ -814,6 +815,20 @@ bool COMMAND_PROCESSOR::ExecutePacketType3_REG_TO_MEM(
   uint32_t reg_val;
 
   assert_true(reg_addr < RegisterFile::kRegisterCount);
+  if (reg_addr == XE_GPU_REG_RBBM_PERFCOUNTER1_LOW ||
+      reg_addr == XE_GPU_REG_RBBM_PERFCOUNTER1_HI) {
+    uint64_t host_ticks = Clock::QueryHostTickCount();
+    uint64_t host_freq = Clock::QueryHostTickFrequency();
+    uint64_t gpu_ticks =
+        host_freq ? ((host_ticks / host_freq) * 500000000ULL +
+                     ((host_ticks % host_freq) * 500000000ULL) / host_freq)
+                  : host_ticks;
+    gpu_ticks &= 0xFFFFFFFFFFFFULL;
+    register_file_->values[XE_GPU_REG_RBBM_PERFCOUNTER1_LOW] =
+        static_cast<uint32_t>(gpu_ticks);
+    register_file_->values[XE_GPU_REG_RBBM_PERFCOUNTER1_HI] =
+        static_cast<uint32_t>(gpu_ticks >> 32);
+  }
   reg_val = register_file_->values[reg_addr];
 
   auto endianness = static_cast<xenos::Endian>(mem_addr & 0x3);

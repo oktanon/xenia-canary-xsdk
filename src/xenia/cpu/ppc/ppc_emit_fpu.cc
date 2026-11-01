@@ -404,13 +404,29 @@ int InstrEmit_mffsx(PPCHIRBuilder& f, const InstrData& i) {
 }
 
 int InstrEmit_mtfsb0x(PPCHIRBuilder& f, const InstrData& i) {
-  XEINSTRNOTIMPLEMENTED();
-  return 1;
+  uint32_t bit = 31 - i.X.RT;
+  Value* v = f.And(f.LoadFPSCR(), f.LoadConstantUint32(~(1u << bit)));
+  f.StoreFPSCR(v);
+  if (bit <= 2) {
+    f.SetRoundingMode(f.And(v, f.LoadConstantInt32(7)));
+  }
+  if (i.X.Rc) {
+    f.CopyFPSCRToCR1();
+  }
+  return 0;
 }
 
 int InstrEmit_mtfsb1x(PPCHIRBuilder& f, const InstrData& i) {
-  XEINSTRNOTIMPLEMENTED();
-  return 1;
+  uint32_t bit = 31 - i.X.RT;
+  Value* v = f.Or(f.LoadFPSCR(), f.LoadConstantUint32(1u << bit));
+  f.StoreFPSCR(v);
+  if (bit <= 2) {
+    f.SetRoundingMode(f.And(v, f.LoadConstantInt32(7)));
+  }
+  if (i.X.Rc) {
+    f.CopyFPSCRToCR1();
+  }
+  return 0;
 }
 
 int InstrEmit_mtfsfx(PPCHIRBuilder& f, const InstrData& i) {

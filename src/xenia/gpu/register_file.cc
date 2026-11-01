@@ -41,6 +41,17 @@ RegisterFile::RegisterFile() {
   values[XE_GPU_REG_PA_CL_GB_HORZ_CLIP_ADJ] = 0x40000000;  // 2.0f
   values[XE_GPU_REG_PA_CL_GB_HORZ_DISC_ADJ] = 0x3F800000;  // 1.0f
   values[XE_GPU_REG_PA_SC_AA_MASK] = 0x0000FFFF;
+  // AVIVO display controller power-on defaults for xsdk / homebrew ports.
+  values[XE_GPU_REG_D1GRPH_ENABLE] = 1;
+  values[XE_GPU_REG_D1GRPH_CONTROL] = 0x00000002;  // 32bpp XRGB8 tiled
+  values[XE_GPU_REG_D1GRPH_PITCH] = 1280;
+  values[XE_GPU_REG_D1GRPH_X_END] = 1280;
+  values[XE_GPU_REG_D1GRPH_Y_END] = 720;
+  values[XE_GPU_REG_DC_LUT_AUTOFILL] = 0x00000002;  // AUTOFILL_DONE
+  values[XE_GPU_REG_D1MODE_V_COUNTER] = 0x000003C0;
+  values[XE_GPU_REG_D1MODE_VBLANK_VLINE_STATUS] = 1;
+  values[XE_GPU_REG_D1MODE_VIEWPORT_SIZE] = 0x050002D0;  // 1280x720
+  values[XE_GPU_REG_D1MODE_LB_PITCH_IN_WORDS] = 1280 / 4 - 1;
   // Tessellation levels also reset to 1.0f on hardware, but the backends apply
   // the effective factor as (register + 1.0f), so initializing them here would
   // change the effective reset factor; left out for separate review.

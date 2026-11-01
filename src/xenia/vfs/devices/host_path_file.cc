@@ -22,6 +22,7 @@ HostPathFile::HostPathFile(
 HostPathFile::~HostPathFile() = default;
 
 void HostPathFile::Destroy() {
+  file_handle_.reset();
   if (entry_ && entry_->delete_on_close()) {
     entry()->Delete();
   }

@@ -103,13 +103,14 @@ DEFINE_bool(gpu_3d_to_2d_texture, true,
             "GPU");
 
 DEFINE_bool(
-    async_shader_compilation, true,
+    async_shader_compilation, false,
     "Compile shaders and create pipelines asynchronously in background "
     "threads. "
     "Eliminates shader compilation stutter but may cause brief rendering "
     "artifacts while pipelines are being created. When disabled, pipelines are "
     "created synchronously which causes stutter but no visual artifacts.",
     "GPU");
+UPDATE_from_bool(async_shader_compilation, 2026, 11, 1, 1, true);
 
 DEFINE_bool(
     force_depth_clamp, false,

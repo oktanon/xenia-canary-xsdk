@@ -79,10 +79,15 @@ DEFINE_string(
     "module.",
     "General");
 
-DEFINE_bool(allow_game_relative_writes, false,
+DEFINE_bool(allow_game_relative_writes, true,
             "Not useful to non-developers. Allows code to write to paths "
             "relative to game://. Used for "
             "generating test data to compare with original hardware. ",
+            "General");
+
+DEFINE_bool(exit_on_crash, false,
+            "Immediately exit with non-zero status after logging guest crash "
+            "dump and symbolic PPC stack backtrace (for rapid port debugging).",
             "General");
 
 DECLARE_bool(allow_plugins);
@@ -143,23 +148,8 @@ Emulator::Emulator(const std::filesystem::path& command_line,
   }
 
 #if XE_PLATFORM_WIN32 == 1
-  // Show a disclaimer that links to the quickstart
-  // guide the first time they ever open the emulator
   uint64_t persistent_flags = GetPersistentEmulatorFlags();
   if (!(persistent_flags & EmulatorFlagDisclaimerAcknowledged)) {
-    if ((MessageBoxW(
-             nullptr,
-             L"DISCLAIMER: Xenia is not for enabling illegal activity, and "
-             "support is unavailable for illegally obtained software.\n\n"
-             "Please respect this policy as no further reminders will be "
-             "given.\n\nThe quickstart guide explains how to use digital or "
-             "physical games from your Xbox 360 console.\n\nWould you like "
-             "to open it?",
-             L"Xenia", MB_YESNO | MB_ICONQUESTION) == IDYES)) {
-      LaunchWebBrowser(
-          "https://github.com/xenia-canary/xenia-canary/wiki/"
-          "Quickstart#how-to-rip-games");
-    }
     SetPersistentEmulatorFlags(persistent_flags |
                                EmulatorFlagDisclaimerAcknowledged);
   }
@@ -1413,9 +1403,15 @@ bool Emulator::ExceptionCallback(Exception* ex) {
                                current_thread->thread_id()));
   crash_msg.append(
       fmt::format("Thread Handle: 0x{:08X}\n", current_thread->handle()));
-  crash_msg.append(
-      fmt::format("PC: 0x{:08X}\n",
-                  guest_function->MapMachineCodeToGuestAddress(ex->pc())));
+  uint32_t guest_pc = guest_function->MapMachineCodeToGuestAddress(ex->pc());
+  crash_msg.append(fmt::format("PC: 0x{:08X} ({})\n", guest_pc,
+                               guest_function->name()));
+  crash_msg.append(fmt::format("LR: 0x{:08X}  CTR: 0x{:08X}  CR: 0x{:08X}  "
+                               "FPSCR: 0x{:08X}\n",
+                               static_cast<uint32_t>(context->lr),
+                               static_cast<uint32_t>(context->ctr),
+                               static_cast<uint32_t>(context->cr()),
+                               context->fpscr.value));
   if (ex->code() == Exception::Code::kAccessViolation) {
     const char* op_str = "unknown";
     if (ex->access_violation_operation() ==
@@ -1425,10 +1421,71 @@ bool Emulator::ExceptionCallback(Exception* ex) {
                Exception::AccessViolationOperation::kWrite) {
       op_str = "write";
     }
-    crash_msg.append(fmt::format("Access Violation: {} at 0x{:016X}\n", op_str,
-                                 ex->fault_address()));
+    uintptr_t vbase = reinterpret_cast<uintptr_t>(memory()->virtual_membase());
+    uintptr_t pbase = reinterpret_cast<uintptr_t>(memory()->physical_membase());
+    if (ex->fault_address() >= vbase &&
+        ex->fault_address() < vbase + 0x100000000ULL) {
+      crash_msg.append(fmt::format(
+          "Access Violation: {} at host 0x{:016X} (guest virtual 0x{:08X})\n",
+          op_str, ex->fault_address(),
+          static_cast<uint32_t>(ex->fault_address() - vbase)));
+    } else if (ex->fault_address() >= pbase &&
+               ex->fault_address() < pbase + 0x20000000ULL) {
+      crash_msg.append(fmt::format(
+          "Access Violation: {} at host 0x{:016X} (guest physical 0x{:08X})\n",
+          op_str, ex->fault_address(),
+          static_cast<uint32_t>(ex->fault_address() - pbase)));
+    } else {
+      crash_msg.append(fmt::format("Access Violation: {} at 0x{:016X}\n",
+                                   op_str, ex->fault_address()));
+    }
   } else if (ex->code() == Exception::Code::kIllegalInstruction) {
     crash_msg.append("Illegal Instruction\n");
+  }
+  crash_msg.append("PPC Guest Stack Backtrace:\n");
+  crash_msg.append(
+      fmt::format("  #0  0x{:08X} ({})\n", guest_pc, guest_function->name()));
+  {
+    uint32_t lr_addr = static_cast<uint32_t>(context->lr);
+    auto* lr_fn = processor()->ResolveFunction(lr_addr);
+    crash_msg.append(fmt::format("  LR  0x{:08X} ({})\n", lr_addr,
+                                 lr_fn ? lr_fn->name() : "unknown"));
+    uint32_t sp = static_cast<uint32_t>(context->r[1]);
+    for (int depth = 1; depth <= 16 && sp >= 0x1000 && sp < 0xF0000000;
+         ++depth) {
+      auto* heap = memory()->LookupHeap(sp);
+      if (!heap) {
+        break;
+      }
+      uint32_t page_access = 0;
+      if (!heap->QueryProtect(sp, &page_access) ||
+          page_access == 0) {
+        break;
+      }
+      const uint8_t* frame_ptr = memory()->TranslateVirtual(sp);
+      uint32_t next_sp = xe::load_and_swap<uint32_t>(frame_ptr);
+      // Check both PPC64/Xenon ABI LR slot (next_sp - 8) and SVR4/GCC slot
+      // (next_sp + 4 or next_sp + 8).
+      uint32_t saved_lr = 0;
+      if (next_sp >= 0x1008 && next_sp < 0xF0000000 && next_sp > sp &&
+          next_sp - sp <= 0x100000) {
+        saved_lr = xe::load_and_swap<uint32_t>(
+            memory()->TranslateVirtual(next_sp - 8));
+        if (saved_lr < 0x80000000 || saved_lr >= 0x9F000000) {
+          saved_lr = xe::load_and_swap<uint32_t>(frame_ptr + 8);
+        }
+      }
+      if (saved_lr != 0) {
+        auto* fn = processor()->ResolveFunction(saved_lr);
+        crash_msg.append(fmt::format("  #{:<2} 0x{:08X} ({}) [sp=0x{:08X}]\n",
+                                     depth, saved_lr,
+                                     fn ? fn->name() : "unknown", sp));
+      }
+      if (next_sp <= sp || next_sp - sp > 0x100000) {
+        break;
+      }
+      sp = next_sp;
+    }
   }
   crash_msg.append("Registers:\n");
   for (int i = 0; i < 32; i++) {
@@ -1448,6 +1505,10 @@ bool Emulator::ExceptionCallback(Exception* ex) {
   }
   XELOGE("{}", crash_msg);
   FlushLog();
+
+  if (cvars::exit_on_crash) {
+    std::exit(1);
+  }
 
   // Pause the emulator and eat the exception.
   Pause();

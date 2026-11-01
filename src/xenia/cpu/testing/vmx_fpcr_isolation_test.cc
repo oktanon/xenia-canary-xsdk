@@ -8,8 +8,11 @@
  */
 
 #include "xenia/cpu/testing/util.h"
+#include "xenia/base/byte_order.h"
+#include "xenia/cpu/raw_module.h"
 
 #include <cmath>
+#include <cstring>
 
 using namespace xe;
 using namespace xe::cpu;
@@ -100,4 +103,110 @@ TEST_CASE("VMX_FPCR_DOES_NOT_LEAK_INTO_SCALAR_MULTIPLE_OPS", "[backend]") {
         REQUIRE(result == expected);
         test.processors[0]->backend()->SetGuestRoundingMode(ctx, 0);
       });
+}
+
+TEST_CASE("CONSECUTIVE_RESERVED_LOADS_WITHOUT_STORE", "[backend]") {
+  // GCC's PowerPC __atomic_compare_exchange / std::atomic pattern executes
+  // lwarx, compares, and branches out without stwcx. when the expected value
+  // does not match, then executes another lwarx followed by stwcx.
+  TestFunction test([](HIRBuilder& b) {
+    auto addr1 = LoadGPR(b, 3);
+    auto addr2 = LoadGPR(b, 4);
+    // First lwarx (abandoned without stwcx., e.g. failed compare branch).
+    auto v1 = b.ByteSwap(b.LoadWithReserve(addr1, INT32_TYPE));
+    StoreGPR(b, 5, b.ZeroExtend(v1, INT64_TYPE));
+    // Second lwarx on a different or same address, followed by stwcx.
+    auto v2 = b.ByteSwap(b.LoadWithReserve(addr2, INT32_TYPE));
+    StoreGPR(b, 6, b.ZeroExtend(v2, INT64_TYPE));
+    auto new_val = b.ByteSwap(b.Truncate(LoadGPR(b, 7), INT32_TYPE));
+    auto ok = b.StoreWithReserve(addr2, new_val, INT32_TYPE);
+    StoreGPR(b, 8, b.ZeroExtend(ok, INT64_TYPE));
+    b.Return();
+  });
+  uint32_t scratch = test.memory->SystemHeapAlloc(64);
+  uint8_t* host_ptr = test.memory->TranslateVirtual(scratch);
+  xe::store_and_swap<uint32_t>(host_ptr + 0, 0x11223344u);
+  xe::store_and_swap<uint32_t>(host_ptr + 4, 0x55667788u);
+  test.Run(
+      [scratch](PPCContext* ctx) {
+        ctx->r[3] = scratch;
+        ctx->r[4] = scratch + 4;
+        ctx->r[7] = 0xAABBCCDDu;
+      },
+      [scratch, host_ptr](PPCContext* ctx) {
+        REQUIRE(ctx->r[5] == 0x11223344u);
+        REQUIRE(ctx->r[6] == 0x55667788u);
+        REQUIRE(ctx->r[8] == 1u);
+        REQUIRE(xe::load_and_swap<uint32_t>(host_ptr + 4) == 0xAABBCCDDu);
+      });
+  test.memory->SystemHeapFree(scratch);
+}
+
+TEST_CASE("XSDK_PPC_STRING_WORD_AND_XER_INSTRUCTIONS", "[ppc]") {
+  auto memory = std::make_unique<Memory>();
+  REQUIRE(memory->Initialize());
+  auto backend = std::make_unique<xe::cpu::backend::x64::X64Backend>();
+  auto processor = std::make_unique<Processor>(memory.get(), nullptr);
+  REQUIRE(processor->Setup(std::move(backend)));
+
+  uint32_t code_addr = 0x82000000;
+  REQUIRE(memory->LookupHeap(code_addr)->AllocFixed(
+      code_addr, 64 * 1024, 64 * 1024,
+      kMemoryAllocationReserve | kMemoryAllocationCommit,
+      kMemoryProtectRead | kMemoryProtectWrite));
+  uint8_t* code_ptr = memory->TranslateVirtual(code_addr);
+  const uint32_t insns[] = {
+      0x7C8103A6,  // mtxer r4
+      0x7CA102A6,  // mfxer r5
+      0x7CC334AA,  // lswi r6, r3, 6
+      0x7CC835AA,  // stswi r6, r8, 6
+      0x7D401C2A,  // lswx r10, 0, r3
+      0x7D404D2A,  // stswx r10, 0, r9
+      0x4E800020,  // blr
+  };
+  for (size_t i = 0; i < xe::countof(insns); ++i) {
+    xe::store_and_swap<uint32_t>(code_ptr + i * 4, insns[i]);
+  }
+  auto raw_mod = std::make_unique<RawModule>(processor.get());
+  raw_mod->SetAddressRange(code_addr, sizeof(insns));
+  processor->AddModule(std::move(raw_mod));
+  processor->backend()->CommitExecutableRange(code_addr, code_addr + 0x10000);
+
+  uint32_t data_addr = memory->SystemHeapAlloc(256);
+  uint8_t* data_ptr = memory->TranslateVirtual(data_addr);
+  std::memset(data_ptr, 0, 256);
+  const char src_bytes[8] = {'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'};
+  std::memcpy(data_ptr + 0, src_bytes, 8);
+
+  uint32_t stack_size = 64 * 1024;
+  uint32_t stack_addr = memory->SystemHeapAlloc(stack_size);
+  auto thread_state = std::make_unique<ThreadState>(processor.get(), 0x101,
+                                                    stack_addr + stack_size);
+  auto* ctx = thread_state->context();
+  ctx->lr = 0xBCBCBCBC;
+  ctx->r[3] = data_addr;       // source buffer ("ABCDEFGH")
+  ctx->r[4] = 5;               // XER byte count = 5
+  ctx->r[8] = data_addr + 32;  // stswi destination (6 bytes)
+  ctx->r[9] = data_addr + 64;  // stswx destination (5 bytes)
+
+  auto* fn = processor->ResolveFunction(code_addr);
+  REQUIRE(fn != nullptr);
+  fn->Call(thread_state.get(), uint32_t(ctx->lr));
+
+  // Verify XER[57:63] byte count round-trip.
+  REQUIRE((ctx->r[5] & 0x7F) == 5);
+  // Verify lswi loaded 6 bytes into r6 ('ABCD') and r7 ('EF\0\0').
+  REQUIRE(static_cast<uint32_t>(ctx->r[6]) == 0x41424344u);
+  REQUIRE(static_cast<uint32_t>(ctx->r[7]) == 0x45460000u);
+  // Verify stswi stored 6 bytes ("ABCDEF").
+  REQUIRE(std::memcmp(data_ptr + 32, "ABCDEF\0\0", 8) == 0);
+  // Verify lswx/stswx copied 5 bytes ("ABCDE").
+  CHECK(ctx->xer_byte_count == 5);
+  CHECK(static_cast<uint32_t>(ctx->r[10]) == 0x41424344u);
+  CHECK(static_cast<uint32_t>(ctx->r[11]) == 0x45000000u);
+  REQUIRE(std::memcmp(data_ptr + 64, "ABCDE\0\0\0", 8) == 0);
+
+  thread_state.reset();
+  memory->SystemHeapFree(stack_addr);
+  memory->SystemHeapFree(data_addr);
 }

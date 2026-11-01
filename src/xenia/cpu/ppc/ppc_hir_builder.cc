@@ -502,14 +502,16 @@ void PPCHIRBuilder::CopyFPSCRToCR1() {
 }
 
 Value* PPCHIRBuilder::LoadXER() {
-  Value* v = Shl(ZeroExtend(LoadCA(), INT64_TYPE), 29);
-  // TODO(benvanik): construct with other flags; overflow, etc?
-  return v;
+  Value* ca = Shl(ZeroExtend(LoadCA(), INT64_TYPE), 29);
+  Value* bc = ZeroExtend(
+      LoadContext(offsetof(PPCContext, xer_byte_count), INT8_TYPE), INT64_TYPE);
+  return Or(ca, bc);
 }
 
 void PPCHIRBuilder::StoreXER(Value* value) {
-  // TODO(benvanik): use other fields? For now, just pull out CA.
   StoreCA(Truncate(And(Shr(value, 29), LoadConstantInt64(1)), INT8_TYPE));
+  StoreContext(offsetof(PPCContext, xer_byte_count),
+               Truncate(And(value, LoadConstantInt64(0x7F)), INT8_TYPE));
 }
 
 Value* PPCHIRBuilder::LoadCA() {

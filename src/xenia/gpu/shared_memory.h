@@ -105,6 +105,9 @@ class SharedMemory {
   // regions in those pages.
   void RangeWrittenByGpu(uint32_t start, uint32_t length);
 
+  // Mark the memory range as updated and protect it.
+  void MakeRangeValid(uint32_t start, uint32_t length, bool written_by_gpu);
+
  protected:
   SharedMemory(Memory& memory);
   // Call in implementation-specific initialization.
@@ -135,9 +138,6 @@ class SharedMemory {
   // access in the texture cache.
   virtual bool AllocateSparseHostGpuMemoryRange(uint32_t offset_allocations,
                                                 uint32_t length_allocations);
-
-  // Mark the memory range as updated and protect it.
-  void MakeRangeValid(uint32_t start, uint32_t length, bool written_by_gpu);
 
   // Uploads a range of host pages - only called if host GPU sparse memory
   // allocation succeeded if needed. While uploading, MakeRangeValid must be

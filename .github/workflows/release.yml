@@ -1,0 +1,122 @@
+name: Build and Release XSDK Xenia
+
+on:
+  push:
+    branches:
+      - master
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build Windows x64 & Create Release
+    runs-on: windows-2022
+    env:
+      POWERSHELL_TELEMETRY_OPTOUT: 1
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache Vulkan SDK
+        id: cache-vulkan-sdk
+        uses: actions/cache@v4
+        with:
+          path: C:\VulkanSDK
+          key: ${{ runner.os }}-vulkan-sdk
+
+      - name: Install Vulkan SDK
+        run: |
+          if (-not (Test-Path "C:\VulkanSDK")) {
+            Write-Host "Downloading Vulkan SDK..."
+            Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe" -OutFile "vulkan-sdk.exe"
+            Start-Process -FilePath ".\vulkan-sdk.exe" -ArgumentList "--accept-licenses", "--default-answer", "--confirm-command", "install" -NoNewWindow -Wait
+          }
+          $vulkanDir = Get-ChildItem -Path 'C:\VulkanSDK' -Directory | Select-Object -First 1 -ExpandProperty FullName
+          Write-Host "Vulkan SDK located at: $vulkanDir"
+          echo "VULKAN_SDK=$vulkanDir" >> $env:GITHUB_ENV
+          echo "$vulkanDir\Bin" >> $env:GITHUB_PATH
+
+      - name: Setup Ninja
+        uses: ashley-hebler/setup-ninja@v1.2.0
+
+      - name: Build XSDK Xenia
+        run: |
+          python xenia-build.py build --config=Release --target=xenia-app
+
+      - name: Prepare Release Assets
+        id: package
+        shell: pwsh
+        run: |
+          $exePath = "build\bin\Windows\Release\xenia_canary.exe"
+          if (-not (Test-Path $exePath)) {
+            Write-Error "El ejecutable no fue generado en $exePath"
+            exit 1
+          }
+
+          $stageDir = "xsdk_xenia_bin"
+          New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
+          Copy-Item $exePath -Destination "$stageDir\xsdk_xenia.exe"
+          Copy-Item $exePath -Destination "$stageDir\xenia_canary.exe"
+          if (Test-Path "LICENSE") { Copy-Item "LICENSE" -Destination $stageDir }
+          if (Test-Path "README.md") { Copy-Item "README.md" -Destination $stageDir }
+
+          $zipPath = "xsdk_xenia_windows_x64.zip"
+          Compress-Archive -Path "$stageDir\*" -DestinationPath $zipPath -Force
+
+          $shortSha = "${{ github.sha }}".Substring(0, 7)
+          echo "zip_path=$zipPath" >> $env:GITHUB_OUTPUT
+          echo "short_sha=$shortSha" >> $env:GITHUB_OUTPUT
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: xsdk-xenia-windows-x64
+          path: ${{ steps.package.outputs.zip_path }}
+          retention-days: 14
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $shortSha = "${{ steps.package.outputs.short_sha }}"
+          $tag = if ("${{ github.ref }}".StartsWith("refs/tags/")) { "${{ github.ref_name }}" } else { "v-$shortSha" }
+          $title = "XSDK Xenia ($tag)"
+          $notes = @"
+          ## XSDK Xenia - Release Experimental
+          
+          Build compilado de **XSDK Xenia** con capa de compatibilidad para:
+          - [xsdk](https://github.com/xenosworks/xsdk)
+          - [vulkan4xenon](https://github.com/xenosworks/vulkan4xenon)
+          - [SDL-xenon](https://github.com/xenosworks/SDL-xenon)
+          
+          ### ⚠️ Aviso:
+          Este fork es altamente experimental y está destinado para el debug rápido de homebrew y ports en PC. El rendimiento no se compara con el de la consola Xbox 360 real.
+          
+          **Commit:** ${{ github.sha }}
+          **Archivo:** ${{ steps.package.outputs.zip_path }}
+          "@
+          
+          # Verificar si la release ya existe
+          $releaseExists = gh release view $tag 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "La release $tag ya existe. Subiendo assets..."
+            gh release upload $tag "${{ steps.package.outputs.zip_path }}" --clobber
+          } else {
+            Write-Host "Creando release $tag..."
+            gh release create $tag "${{ steps.package.outputs.zip_path }}" --title $title --notes "$notes" --prerelease
+          }

@@ -1,11 +1,6 @@
 name: Orchestrator
 
 on:
-  push:
-    paths-ignore:
-      - '*.md'
-      - 'docs/**'
-      - 'LICENSE'
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths-ignore:

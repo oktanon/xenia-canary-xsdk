@@ -136,22 +136,74 @@ void Entry::Touch() {
   // TODO(benvanik): update timestamps.
 }
 
-void Entry::Rename(const std::filesystem::path file_path) {
+void Entry::UpdatePathsFromParent() {
+  path_ = xe::utf8::join_guest_paths(parent_->path(), name_);
+  absolute_path_ = xe::utf8::join_guest_paths(device_->mount_path(), path_);
+  OnPathChanged();
+  for (auto& child : children_) {
+    child->UpdatePathsFromParent();
+  }
+}
+
+bool Entry::Rename(const std::filesystem::path file_path) {
+  auto global_lock = global_critical_region_.Acquire();
+  if (is_read_only() || !parent_) {
+    return false;
+  }
+
   // Store the string to ensure string_views from split_path remain valid
   const std::string path_str = xe::path_to_utf8(file_path);
   std::vector<std::string_view> path_parts = xe::utf8::split_path(path_str);
 
   // Remove the root (e.g., "cache:")
+  if (path_parts.size() < 2) {
+    return false;
+  }
   path_parts.erase(path_parts.begin());
 
-  RenameEntryInternal(path_parts);
+  // Find the directory the entry is being moved to.
+  const std::string new_name(path_parts.back());
+  const std::string new_parent_path = xe::utf8::join_guest_paths(
+      std::vector<std::string_view>(path_parts.begin(), path_parts.end() - 1));
+  Entry* new_parent = new_parent_path.empty()
+                          ? device_->ResolvePath("")
+                          : device_->ResolvePath(new_parent_path);
+  if (!new_parent || !(new_parent->attributes() & kFileAttributeDirectory)) {
+    return false;
+  }
+  // Refuse to move a directory into itself.
+  for (Entry* e = new_parent; e; e = e->parent_) {
+    if (e == this) {
+      return false;
+    }
+  }
+  if (Entry* existing = new_parent->GetChild(new_name);
+      existing && existing != this) {
+    return false;
+  }
 
-  const std::string guest_path = xe::utf8::join_guest_paths(path_parts);
-  absolute_path_ =
-      xe::utf8::join_guest_paths(device_->mount_path(), guest_path);
-  path_ = guest_path;
+  if (!RenameEntryInternal(path_parts)) {
+    return false;
+  }
+
+  // Move this entry into the new parent's children list.
+  if (new_parent != parent_) {
+    Entry* old_parent = parent_;
+    for (auto it = old_parent->children_.begin();
+         it != old_parent->children_.end(); ++it) {
+      if (it->get() == this) {
+        new_parent->children_.push_back(std::move(*it));
+        old_parent->children_.erase(it);
+        break;
+      }
+    }
+    parent_ = new_parent;
+  }
+
   // Use the guest path since POSIX doesn't treat \ as a separator.
-  name_ = path_parts.empty() ? std::string() : std::string(path_parts.back());
+  name_ = new_name;
+  UpdatePathsFromParent();
+  return true;
 }
 
 }  // namespace vfs

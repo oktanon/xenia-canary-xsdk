@@ -106,28 +106,35 @@ jobs:
         run: |
           $shortSha = "${{ steps.package.outputs.short_sha }}"
           $tag = if ("${{ github.ref }}".StartsWith("refs/tags/")) { "${{ github.ref_name }}" } else { "v-$shortSha" }
-          $title = "XSDK Xenia ($tag)"
+          # Version number: the pushed tag (v1.2.3), otherwise 0.1.<commit count>
+          if ("${{ github.ref }}".StartsWith("refs/tags/")) {
+            $version = "${{ github.ref_name }}"
+          } else {
+            $version = "v0.1.$(git rev-list --count HEAD)"
+          }
+          $title = "XSDK Xenia $version ($shortSha)"
           $notes = @"
-          ## XSDK Xenia - Release Experimental
+          ## XSDK Xenia - Experimental Release
           
-          Build compilado de **XSDK Xenia** con capa de compatibilidad para:
+          Build of **XSDK Xenia** with a compatibility layer for:
           - [xsdk](https://github.com/xenosworks/xsdk)
           - [vulkan4xenon](https://github.com/xenosworks/vulkan4xenon)
           - [SDL-xenon](https://github.com/xenosworks/SDL-xenon)
           
-          ### Aviso:
-          Este fork es altamente experimental y esta destinado para el debug rapido de homebrew y ports en PC. El rendimiento no se compara con el de la consola Xbox 360 real.
+          ### Notice:
+          This fork is highly experimental and intended for fast debugging of homebrew and ports on PC. Performance is not comparable to a real Xbox 360 console.
           
+          **Version:** $version
           **Commit:** ${{ github.sha }}
-          **Archivo:** ${{ steps.package.outputs.zip_path }}
+          **File:** ${{ steps.package.outputs.zip_path }}
           "@
           
-          # Verificar si la release ya existe
+          # Check whether the release already exists
           $releaseExists = gh release view $tag 2>$null
           if ($LASTEXITCODE -eq 0) {
-            Write-Host "La release $tag ya existe. Subiendo assets..."
+            Write-Host "Release $tag already exists. Uploading assets..."
             gh release upload $tag "${{ steps.package.outputs.zip_path }}" --clobber
           } else {
-            Write-Host "Creando release $tag..."
+            Write-Host "Creating release $tag..."
             gh release create $tag "${{ steps.package.outputs.zip_path }}" --title $title --notes "$notes" --prerelease
           }

@@ -339,7 +339,9 @@ X_STATUS XFile::SetLength(size_t length) {
   return file_->SetLength(length);
 }
 X_STATUS XFile::Rename(const std::filesystem::path file_path) {
-  entry()->Rename(file_path);
+  if (!entry()->Rename(file_path)) {
+    return X_STATUS_ACCESS_DENIED;
+  }
   return X_STATUS_SUCCESS;
 }
 

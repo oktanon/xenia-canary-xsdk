@@ -59,4 +59,37 @@ TEST_CASE("Host path entry found by its new name after a rename",
   std::filesystem::remove_all(dir);
 }
 
+TEST_CASE("Host path entry moved to another directory by a rename",
+          "[vfs_rename]") {
+  const std::filesystem::path dir =
+      std::filesystem::temp_directory_path() /
+      ("xenia-vfs-move-" +
+       std::to_string(
+           std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(dir / "data");
+  std::ofstream(dir / "setting.tmp") << "data";
+
+  {
+    HostPathDevice device("\\Device\\Test", dir, false);
+    REQUIRE(device.Initialize());
+    Entry* entry = device.ResolvePath("setting.tmp");
+    Entry* data = device.ResolvePath("data");
+    REQUIRE(entry != nullptr);
+    REQUIRE(data != nullptr);
+
+    REQUIRE(entry->Rename("cache:\\data\\setting.txt"));
+
+    REQUIRE(entry->parent() == data);
+    REQUIRE(device.ResolvePath("data\\setting.txt") == entry);
+    REQUIRE(device.ResolvePath("setting.tmp") == nullptr);
+    REQUIRE(std::filesystem::exists(dir / "data" / "setting.txt"));
+
+    // Deleting the moved entry must remove it from its new parent.
+    REQUIRE(entry->Delete());
+    REQUIRE(device.ResolvePath("data\\setting.txt") == nullptr);
+  }
+
+  std::filesystem::remove_all(dir);
+}
+
 }  // namespace xe::vfs::test

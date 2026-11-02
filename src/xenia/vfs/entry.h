@@ -120,7 +120,8 @@ class Entry {
   bool Delete();
   void Touch();
 
-  void Rename(const std::filesystem::path file_path);
+  // Renames/moves the entry (path includes the device root, e.g. "cache:\x").
+  bool Rename(const std::filesystem::path file_path);
   // If successful, out_file points to a new file. When finished, call
   // file->Destroy()
   virtual X_STATUS Open(uint32_t desired_access, File** out_file) = 0;
@@ -141,8 +142,13 @@ class Entry {
     return nullptr;
   }
   virtual bool DeleteEntryInternal(Entry* entry) = 0;
-  virtual void RenameEntryInternal(
-      const std::vector<std::string_view>& path_parts) {}
+  virtual bool RenameEntryInternal(
+      const std::vector<std::string_view>& path_parts) {
+    return false;
+  }
+  // Called after path_ changed because this entry or an ancestor was moved.
+  virtual void OnPathChanged() {}
+  void UpdatePathsFromParent();
 
   xe::global_critical_region global_critical_region_;
   Device* device_;

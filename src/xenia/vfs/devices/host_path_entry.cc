@@ -122,7 +122,7 @@ bool HostPathEntry::DeleteEntryInternal(Entry* entry) {
   }
 }
 
-void HostPathEntry::RenameEntryInternal(
+bool HostPathEntry::RenameEntryInternal(
     const std::vector<std::string_view>& path_parts) {
   const std::string relative_path = xe::utf8::join_paths(path_parts);
   const std::string new_host_path_ = xe::utf8::join_paths(
@@ -134,9 +134,20 @@ void HostPathEntry::RenameEntryInternal(
   if (ec) {
     XELOGE("RenameEntryInternal: Failed to rename '{}' to '{}': {}",
            xe::path_to_utf8(host_path_), new_host_path_, ec.message());
-    return;
+    return false;
   }
-  host_path_ = new_host_path_;
+  host_path_ = xe::to_path(new_host_path_);
+  return true;
+}
+
+void HostPathEntry::OnPathChanged() {
+  // Descendants of a moved directory derive their host path from the parent;
+  // the moved entry itself already got its host path in RenameEntryInternal.
+  auto* parent = static_cast<HostPathEntry*>(parent_);
+  auto expected = parent->host_path_ / xe::to_path(name_);
+  if (expected != host_path_) {
+    host_path_ = expected;
+  }
 }
 
 void HostPathEntry::update() {

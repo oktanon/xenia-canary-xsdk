@@ -101,6 +101,10 @@ bool HostPathEntry::DeleteEntryInternal(Entry* entry) {
   auto full_path = host_path_ / xe::to_path(entry->name());
   std::error_code ec;  // avoid exception on remove/remove_all failure
   if (entry->attributes() & kFileAttributeDirectory) {
+    // Already gone from the host: just drop the cached entry.
+    if (!std::filesystem::exists(full_path, ec)) {
+      return true;
+    }
     // Delete entire directory and contents.
     auto removed = std::filesystem::remove_all(full_path, ec);
     return removed >= 1 && removed != static_cast<std::uintmax_t>(-1);

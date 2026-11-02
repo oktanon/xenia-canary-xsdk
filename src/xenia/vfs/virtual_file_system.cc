@@ -108,7 +108,8 @@ bool VirtualFileSystem::ResolveSymbolicLink(const std::string_view path,
                                             std::string& result) {
   result = path;
   bool was_resolved = false;
-  while (true) {
+  // Bound the number of hops so a cyclic link cannot hang the emulator.
+  for (int hops = 0; hops < 32; ++hops) {
     auto it =
         std::ranges::find_if(std::as_const(symlinks_), [&](const auto& s) {
           return xe::utf8::starts_with_case(result, s.first);
@@ -389,6 +390,11 @@ X_STATUS VirtualFileSystem::ExtractDeviceFile(Entry* entry,
 
   if (entry->can_map()) {
     auto map = entry->OpenMapped(xe::MappedMemory::Mode::kRead);
+    if (!map) {
+      fclose(file);
+      in_file->Destroy();
+      return 1;
+    }
 
     size_t remaining_size = map->size();
     size_t offset = 0;
@@ -408,8 +414,14 @@ X_STATUS VirtualFileSystem::ExtractDeviceFile(Entry* entry,
 
     while (remaining_size > 0) {
       size_t bytes_read = 0;
-      in_file->ReadSync(std::span<uint8_t>(buffer, write_buffer_size), offset,
-                        &bytes_read);
+      auto read_status = in_file->ReadSync(
+          std::span<uint8_t>(buffer, write_buffer_size), offset, &bytes_read);
+      if (XFAILED(read_status) || bytes_read == 0) {
+        // Avoid spinning forever on a truncated/unreadable file.
+        result = XFAILED(read_status) ? read_status : X_STATUS_UNSUCCESSFUL;
+        break;
+      }
+      bytes_read = std::min(bytes_read, remaining_size);
       fwrite(buffer, bytes_read, 1, file);
       offset += bytes_read;
       remaining_size -= bytes_read;
@@ -423,7 +435,7 @@ X_STATUS VirtualFileSystem::ExtractDeviceFile(Entry* entry,
   if (buffer) {
     delete[] buffer;
   }
-  return 0;
+  return result;
 }
 
 X_STATUS VirtualFileSystem::ExtractDeviceFiles(Device* device,

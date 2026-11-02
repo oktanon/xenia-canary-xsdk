@@ -5,6 +5,7 @@ on:
     branches:
       - master
       - main
+      - canary_experimental
     tags:
       - 'v*'
   workflow_dispatch:

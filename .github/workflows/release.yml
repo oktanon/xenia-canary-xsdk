@@ -51,8 +51,18 @@ jobs:
           echo "VULKAN_SDK=$vulkanDir" >> $env:GITHUB_ENV
           echo "$vulkanDir\Bin" >> $env:GITHUB_PATH
 
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Setup Ninja
-        uses: ashley-hebler/setup-ninja@v1.2.0
+        run: |
+          if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) {
+            Write-Host "Installing Ninja..."
+            choco install ninja -y
+          }
+          ninja --version
 
       - name: Build XSDK Xenia
         run: |
@@ -105,8 +115,8 @@ jobs:
           - [vulkan4xenon](https://github.com/xenosworks/vulkan4xenon)
           - [SDL-xenon](https://github.com/xenosworks/SDL-xenon)
           
-          ### ⚠️ Aviso:
-          Este fork es altamente experimental y está destinado para el debug rápido de homebrew y ports en PC. El rendimiento no se compara con el de la consola Xbox 360 real.
+          ### Aviso:
+          Este fork es altamente experimental y esta destinado para el debug rapido de homebrew y ports en PC. El rendimiento no se compara con el de la consola Xbox 360 real.
           
           **Commit:** ${{ github.sha }}
           **Archivo:** ${{ steps.package.outputs.zip_path }}

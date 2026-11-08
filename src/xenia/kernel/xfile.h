@@ -167,7 +167,8 @@ class XFile : public XObject {
                  uint32_t apc_context, bool* out_pending = nullptr);
 
   X_STATUS SetLength(size_t length);
-  X_STATUS Rename(const std::filesystem::path file_path);
+  X_STATUS Rename(const std::filesystem::path file_path,
+                  bool replace_existing = true);
 
   void RegisterIOCompletionPort(uint32_t key, object_ref<XIOCompletion> port);
   void RemoveIOCompletionPort(uint32_t key);

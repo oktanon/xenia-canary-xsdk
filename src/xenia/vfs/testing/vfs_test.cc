@@ -92,4 +92,50 @@ TEST_CASE("Host path entry moved to another directory by a rename",
   std::filesystem::remove_all(dir);
 }
 
+TEST_CASE("Host path entry rename replaces an existing file when asked",
+          "[vfs_rename]") {
+  const std::filesystem::path dir =
+      std::filesystem::temp_directory_path() /
+      ("xenia-vfs-replace-" +
+       std::to_string(
+           std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(dir);
+  std::ofstream(dir / "banner.tmp") << "new";
+  std::ofstream(dir / "banner.bin") << "old";
+
+  {
+    HostPathDevice device("\\Device\\Test", dir, false);
+    REQUIRE(device.Initialize());
+    Entry* tmp = device.ResolvePath("banner.tmp");
+    Entry* old_entry = device.ResolvePath("banner.bin");
+    REQUIRE(tmp != nullptr);
+    REQUIRE(old_entry != nullptr);
+
+    // Without ReplaceIfExists the target must be left untouched.
+    X_STATUS status = X_STATUS_SUCCESS;
+    REQUIRE_FALSE(tmp->Rename("cache:\\banner.bin", false, &status));
+    REQUIRE(status == X_STATUS_OBJECT_NAME_COLLISION);
+    REQUIRE(device.ResolvePath("banner.tmp") == tmp);
+    REQUIRE(std::filesystem::exists(dir / "banner.tmp"));
+
+    // With ReplaceIfExists (POSIX rename()) the target is overwritten.
+    REQUIRE(tmp->Rename("cache:\\banner.bin", true, &status));
+    REQUIRE(device.ResolvePath("banner.bin") == tmp);
+    REQUIRE(device.ResolvePath("banner.tmp") == nullptr);
+    REQUIRE_FALSE(std::filesystem::exists(dir / "banner.tmp"));
+    std::ifstream in(dir / "banner.bin");
+    std::string content;
+    in >> content;
+    REQUIRE(content == "new");
+    // Exactly one cached entry named banner.bin remains.
+    size_t count = 0;
+    for (auto& child : device.ResolvePath("")->children()) {
+      if (child->name() == "banner.bin") ++count;
+    }
+    REQUIRE(count == 1);
+  }
+
+  std::filesystem::remove_all(dir);
+}
+
 }  // namespace xe::vfs::test

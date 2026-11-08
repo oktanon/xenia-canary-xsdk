@@ -145,10 +145,20 @@ void Entry::UpdatePathsFromParent() {
   }
 }
 
-bool Entry::Rename(const std::filesystem::path file_path) {
+bool Entry::Rename(const std::filesystem::path file_path,
+                   bool replace_existing, X_STATUS* out_status) {
   auto global_lock = global_critical_region_.Acquire();
-  if (is_read_only() || !parent_) {
+  auto fail = [&](X_STATUS status) {
+    if (out_status) {
+      *out_status = status;
+    }
     return false;
+  };
+  if (out_status) {
+    *out_status = X_STATUS_SUCCESS;
+  }
+  if (is_read_only() || !parent_) {
+    return fail(X_STATUS_ACCESS_DENIED);
   }
 
   // Store the string to ensure string_views from split_path remain valid
@@ -157,7 +167,7 @@ bool Entry::Rename(const std::filesystem::path file_path) {
 
   // Remove the root (e.g., "cache:")
   if (path_parts.size() < 2) {
-    return false;
+    return fail(X_STATUS_OBJECT_NAME_INVALID);
   }
   path_parts.erase(path_parts.begin());
 
@@ -169,21 +179,44 @@ bool Entry::Rename(const std::filesystem::path file_path) {
                           ? device_->ResolvePath("")
                           : device_->ResolvePath(new_parent_path);
   if (!new_parent || !(new_parent->attributes() & kFileAttributeDirectory)) {
-    return false;
+    return fail(X_STATUS_OBJECT_PATH_NOT_FOUND);
   }
   // Refuse to move a directory into itself.
   for (Entry* e = new_parent; e; e = e->parent_) {
     if (e == this) {
-      return false;
+      return fail(X_STATUS_INVALID_PARAMETER);
     }
   }
-  if (Entry* existing = new_parent->GetChild(new_name);
-      existing && existing != this) {
-    return false;
+  Entry* existing = new_parent->GetChild(new_name);
+  if (existing == this) {
+    // Renaming an entry onto itself is a successful no-op.
+    return true;
+  }
+  if (existing) {
+    // POSIX rename() semantics (NtSetInformationFile with ReplaceIfExists):
+    // replace an existing file. Directories are never replaced.
+    if (!replace_existing) {
+      return fail(X_STATUS_OBJECT_NAME_COLLISION);
+    }
+    if ((existing->attributes() & kFileAttributeDirectory) ||
+        (attributes() & kFileAttributeDirectory)) {
+      return fail(X_STATUS_ACCESS_DENIED);
+    }
   }
 
   if (!RenameEntryInternal(path_parts)) {
-    return false;
+    return fail(X_STATUS_ACCESS_DENIED);
+  }
+
+  // The host rename replaced the target; drop its stale cached entry.
+  if (existing) {
+    for (auto it = new_parent->children_.begin();
+         it != new_parent->children_.end(); ++it) {
+      if (it->get() == existing) {
+        new_parent->children_.erase(it);
+        break;
+      }
+    }
   }
 
   // Move this entry into the new parent's children list.

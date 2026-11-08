@@ -338,9 +338,11 @@ X_STATUS XFile::SetLength(size_t length) {
   std::lock_guard<std::mutex> lock(file_lock_);
   return file_->SetLength(length);
 }
-X_STATUS XFile::Rename(const std::filesystem::path file_path) {
-  if (!entry()->Rename(file_path)) {
-    return X_STATUS_ACCESS_DENIED;
+X_STATUS XFile::Rename(const std::filesystem::path file_path,
+                       bool replace_existing) {
+  X_STATUS status = X_STATUS_SUCCESS;
+  if (!entry()->Rename(file_path, replace_existing, &status)) {
+    return XFAILED(status) ? status : X_STATUS_ACCESS_DENIED;
   }
   return X_STATUS_SUCCESS;
 }

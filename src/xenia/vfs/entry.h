@@ -121,7 +121,10 @@ class Entry {
   void Touch();
 
   // Renames/moves the entry (path includes the device root, e.g. "cache:\x").
-  bool Rename(const std::filesystem::path file_path);
+  // If the target file exists it is replaced when replace_existing is set,
+  // otherwise the rename fails with X_STATUS_OBJECT_NAME_COLLISION.
+  bool Rename(const std::filesystem::path file_path,
+              bool replace_existing = true, X_STATUS* out_status = nullptr);
   // If successful, out_file points to a new file. When finished, call
   // file->Destroy()
   virtual X_STATUS Open(uint32_t desired_access, File** out_file) = 0;

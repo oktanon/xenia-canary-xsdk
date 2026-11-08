@@ -19,7 +19,7 @@ test_lswx_with_offset:
   blr
   #_ REGISTER_OUT r6 0x00000000AABBCCDD
 
-test_lswx_zero_count_leaves_registers:
+test_lswx_zero_count_loads_one_byte:
   #_ MEMORY_IN 10001000 11223344
   #_ REGISTER_IN r4 0x0000000010001000
   #_ REGISTER_IN r5 0x0000000000000000
@@ -28,7 +28,7 @@ test_lswx_zero_count_leaves_registers:
   mtxer r8
   lswx r6, r4, r5
   blr
-  #_ REGISTER_OUT r6 0x0000000012345678
+  #_ REGISTER_OUT r6 0x0000000011000000
 
 test_xer_byte_count_roundtrip:
   #_ REGISTER_IN r8 0x0000000020000045

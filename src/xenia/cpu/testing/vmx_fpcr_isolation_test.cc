@@ -201,7 +201,7 @@ TEST_CASE("XSDK_PPC_STRING_WORD_AND_XER_INSTRUCTIONS", "[ppc]") {
   // Verify stswi stored 6 bytes ("ABCDEF").
   REQUIRE(std::memcmp(data_ptr + 32, "ABCDEF\0\0", 8) == 0);
   // Verify lswx/stswx copied 5 bytes ("ABCDE").
-  CHECK(ctx->xer_byte_count == 5);
+  CHECK(ctx->xer_count == 5);
   CHECK(static_cast<uint32_t>(ctx->r[10]) == 0x41424344u);
   CHECK(static_cast<uint32_t>(ctx->r[11]) == 0x45000000u);
   REQUIRE(std::memcmp(data_ptr + 64, "ABCDE\0\0\0", 8) == 0);

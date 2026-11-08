@@ -89,3 +89,25 @@ build/bin/Windows/Release/xenia-cpu-ppc-tests.exe instr_lswi instr_lswx instr_st
 # game
 xenia_canary.exe <title.xex> --headless=true --hid=nop --apu=nop --log_file=run.log
 ```
+
+## Update to upstream `canary_experimental` 8a14dd6 (2026-11-08)
+
+The fork base (`5ef05ba`) was upstream `96ce1ac` (2026-11-01); the "50 commits" shown by `git log` were that history, not
+news. Upstream then gained 64 commits. Merged on branch `update/upstream-2026-11-08` (applied as a 3-way patch, because
+the fork has no shared history with upstream).
+
+* Conflicts were only where the fork had duplicated upstream's CPU work (`x64_backend.cc` reservations,
+  `ppc_emit_memory.cc` string words, `ppc_hir_builder.cc` XER, `ppc_emit_fpu.cc` `mtfsb`, `cvar.h` date). Upstream's
+  versions were taken: generation-counter reservations (fixes abandoned `lwarx` without the fork's per-thread hack),
+  XER OV/SO/count, `mtfsb0/1`, OE forms, `lswi/stswi/stswx`, FP NaN/FPSCR semantics, `MmAllocatePhysicalMemoryEx`
+  default access, `GetModuleHandleA` null names. The fork's `xer_byte_count` field, `stswx` handler and `instr_mtfsbx`
+  test were dropped as redundant.
+* **Kept the fork's `lswx`**: upstream's inline `lswx` emitter crashes the process in this build (segfault/exit 127
+  after the test body, every run; `lswi`, `stswi`, `stswx` are fine). The fork's out-of-line helper is back, now on
+  upstream's `xer_count` and with upstream's documented console behaviour for a count of 0 (loads one byte). Worth
+  reporting upstream.
+* Results: PPC instruction suite **170 149 / 170 149** pass (was 141 785 with 28 320 FP/VMX failures before the update);
+  `xenia-cpu-tests`, `xenia-kernel-tests`, `xenia-vfs-tests` pass; `xenia-base-tests` still has the same
+  `physical_heap_test` failure. SMAS, CTR360 and MKWii still run as before (MKWii writes `banner.bin`).
+* Build note: upstream added `ppc_estimates.cc`; re-run `cmake .` in `build/` after updating, or the link fails with
+  unresolved `EstimateReciprocal*`/`EstimateLog2`.

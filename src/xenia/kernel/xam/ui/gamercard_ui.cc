@@ -207,13 +207,14 @@ constexpr std::array<UserSettingId, 19> UserSettingsToLoad = {
 
 GamercardUI::GamercardUI(xe::ui::Window* window,
                          xe::ui::ImGuiDrawer* imgui_drawer,
-                         KernelState* kernel_state, uint64_t xuid)
+                         KernelState* kernel_state, uint64_t xuid,
+                         std::function<void()> on_icon_change)
     : XamDialog(imgui_drawer),
       window_(window),
       kernel_state_(kernel_state),
       xuid_(xuid),
-      is_signed_in_(kernel_state->xam_state()->GetUserProfile(xuid) !=
-                    nullptr) {
+      is_signed_in_(kernel_state->xam_state()->GetUserProfile(xuid) != nullptr),
+      on_icon_change_(std::move(on_icon_change)) {
   LoadGamercardInfo();
 }
 
@@ -623,6 +624,8 @@ void GamercardUI::SaveAccountData() {
 
   const std::u16string gamertag =
       xe::to_utf16(std::string(gamercardValues_.gamertag));
+  // Clear the old gamertag so a shorter one leaves no stale tail.
+  std::ranges::fill(account.gamertag, u'\0');
   string_util::copy_and_swap_truncating(account.gamertag, gamertag,
                                         std::size(account.gamertag));
 
@@ -648,6 +651,10 @@ void GamercardUI::SaveProfileIcon() {
   kernel_state()->xam_state()->user_tracker()->UpdateUserIcon(
       xuid_, {gamercardValues_.profile_icon.data(),
               gamercardValues_.profile_icon.size()});
+
+  if (on_icon_change_) {
+    on_icon_change_();
+  }
 }
 
 void GamercardUI::SaveSettings() {

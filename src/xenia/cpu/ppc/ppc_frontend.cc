@@ -91,15 +91,19 @@ void SyscallHandler(PPCContext* ppc_context, void* arg0, void* arg1) {
   }
 }
 
+// lswx: loads XER[25:31] bytes from scratch[0] (EA) into the registers starting
+// at scratch[1] (RT), left-justified and zero padded. A count of 0 still loads
+// one byte into RT, like the console. Done out of line because the inline
+// expansion of upstream's emitter crashed the JIT'd test process.
 void LswxHandler(PPCContext* ppc_context, void* arg0, void* arg1) {
   uint32_t ea = static_cast<uint32_t>(ppc_context->scratch);
   uint32_t rt = static_cast<uint32_t>((ppc_context->scratch >> 32) & 0x1F);
-  uint32_t nb = ppc_context->xer_byte_count & 0x7F;
+  uint32_t nb = ppc_context->xer_count & 0x7F;
   if (nb == 0) {
-    return;
+    nb = 1;
   }
   const uint8_t* ptr = ppc_context->TranslateVirtual(ea);
-  uint32_t r = rt & 31;
+  uint32_t r = rt;
   for (uint32_t b = 0; b < nb; ++b) {
     uint32_t byte_in_word = b & 3;
     if (byte_in_word == 0) {
@@ -108,29 +112,8 @@ void LswxHandler(PPCContext* ppc_context, void* arg0, void* arg1) {
       }
       ppc_context->r[r] = 0;
     }
-    uint32_t shift = (3 - byte_in_word) * 8;
-    ppc_context->r[r] |= static_cast<uint64_t>(ptr[b]) << shift;
-  }
-}
-
-void StswxHandler(PPCContext* ppc_context, void* arg0, void* arg1) {
-  uint32_t ea = static_cast<uint32_t>(ppc_context->scratch);
-  uint32_t rs = static_cast<uint32_t>((ppc_context->scratch >> 32) & 0x1F);
-  uint32_t nb = ppc_context->xer_byte_count & 0x7F;
-  if (nb == 0) {
-    return;
-  }
-  uint8_t* ptr = ppc_context->TranslateVirtual(ea);
-  uint32_t r = rs & 31;
-  uint32_t shift = 24;
-  for (uint32_t b = 0; b < nb; ++b) {
-    ptr[b] = static_cast<uint8_t>((ppc_context->r[r] >> shift) & 0xFF);
-    if (shift == 0) {
-      shift = 24;
-      r = (r + 1) & 31;
-    } else {
-      shift -= 8;
-    }
+    ppc_context->r[r] |= static_cast<uint64_t>(ptr[b])
+                         << ((3 - byte_in_word) * 8);
   }
 }
 
@@ -147,8 +130,6 @@ bool PPCFrontend::Initialize() {
       "SyscallHandler", SyscallHandler, nullptr, nullptr);
   builtins_.lswx_handler =
       processor_->DefineBuiltin("LswxHandler", LswxHandler, nullptr, nullptr);
-  builtins_.stswx_handler =
-      processor_->DefineBuiltin("StswxHandler", StswxHandler, nullptr, nullptr);
   return true;
 }
 

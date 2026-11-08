@@ -35,7 +35,6 @@ struct PPCBuiltins {
   Function* leave_global_lock;
   Function* syscall_handler;
   Function* lswx_handler;
-  Function* stswx_handler;
 };
 
 class PPCFrontend {

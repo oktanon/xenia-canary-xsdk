@@ -9,6 +9,7 @@
 
 #include "xenia/gpu/graphics_system.h"
 
+#include <algorithm>
 #include <charconv>
 
 #include "xenia/base/byte_stream.h"
@@ -357,6 +358,32 @@ void GraphicsSystem::WriteRegisterThunk(void* ppc_context, GraphicsSystem* gs,
   gs->WriteRegister(addr, value);
 }
 
+// Scanline counter of the display controller, in viewport lines. The visible
+// lines [0, viewport height) take ~96% of a 60 Hz frame, followed by a short
+// vblank that runs past the height (up to at least line 990, past both the 720p
+// and 960p letterbox sizes) so waits like "counter >= height" always complete
+// within one frame, and flips issued mid-scanout can be told from those issued
+// in vblank.
+static uint32_t ComputeVerticalCounter(uint32_t viewport_size) {
+  uint32_t height = viewport_size & 0xFFF;
+  if (!height) {
+    height = 720;
+  }
+  const uint32_t total = std::max(height + 30, 990u);
+  const uint64_t freq = Clock::QueryHostTickFrequency();
+  if (!freq) {
+    return total - 1;
+  }
+  const uint64_t period = std::max<uint64_t>(freq / 60, 1);
+  const uint64_t phase = Clock::QueryHostTickCount() % period;
+  const uint64_t active = period * 24 / 25;  // 96% of the frame
+  if (phase < active) {
+    return static_cast<uint32_t>(phase * height / active);
+  }
+  return height + static_cast<uint32_t>((phase - active) * (total - height) /
+                                        (period - active));
+}
+
 uint32_t GraphicsSystem::ReadRegister(uint32_t addr) {
   uint32_t r = (addr & 0xFFFF) / 4;
 
@@ -381,7 +408,7 @@ uint32_t GraphicsSystem::ReadRegister(uint32_t addr) {
     case 0x0F2D:  // RB_HSIO_INTERFACE_ALIGNER_VALUE
       return 0x00BBBBBB;
     case 0x194C:  // AVIVO_D1MODE_V_COUNTER (xsdk wait_for_scaler / on_interrupt)
-      return 0x000003C0;  // 960 (vblank line past both 720p and 960p letterbox)
+      return ComputeVerticalCounter(register_file()->values[0x1961]);
     case 0x1951:  // interrupt status
       return 1;   // vblank
     case 0x1961:  // AVIVO_D1MODE_VIEWPORT_SIZE
@@ -417,9 +444,11 @@ void GraphicsSystem::WriteRegister(uint32_t addr, uint32_t value) {
         uint32_t fb_width = regs[0x184D] ? uint32_t(regs[0x184D]) : 1280u;
         uint32_t fb_height = regs[0x184E] ? uint32_t(regs[0x184E]) : 720u;
         uint32_t fb_pitch = regs[0x1848] ? uint32_t(regs[0x1848]) : fb_width;
-        bool is_tiled = (regs[0x1841] & (1u << 20)) != 0;
+        // The kernel leaves D1GRPH_CONTROL at 2 (bit 20 clear) with tiled
+        // front buffers, so a set bit 20 selects a linear surface.
+        bool is_linear = (regs[0x1841] & (1u << 20)) != 0;
         command_processor_->IssueDirectSwap(fb_ptr, fb_width, fb_height,
-                                            fb_pitch, is_tiled);
+                                            fb_pitch, is_linear);
         value = 0;  // Immediately clear double-buffer pending bit for xsdk
       }
       break;

@@ -58,7 +58,7 @@ When porting modern game engines and homebrew applications to the Xbox 360 archi
   Default configuration tuned for open-source development: `readback_resolve = "full"`, `readback_memexport = true`, `occlusion_query_viz = true`, and `async_shader_compilation = false`.
 * **AVIVO Display Controller Emulation**:
   * Emulated `DC_LUT_AUTOFILL` (`0x1928`) with bit 1 (`AUTOFILL_DONE`).
-  * `D1MODE_V_COUNTER` (`0x194C`) reads as a constant `960` (always past vblank), so polling loops terminate immediately; it does not progress with the raster (see `docs/xsdk_compat_analysis.md`).
+  * `D1MODE_V_COUNTER` (`0x194C`) follows a 60 Hz raster in viewport lines (visible lines first, then a vblank past the viewport height).
   * Added direct frontbuffer presentation support via `D1CRTC_DOUBLE_BUFFER_CONTROL` (`0x183B` -> `IssueDirectSwap`) for homebrew rendering directly to memory.
 * **48-Bit 500 MHz GPU Performance Counter (`RBBM_PERFCOUNTER`)**:
   Implemented `RBBM_PERFCOUNTER1_LOW` (`0x0399`) and `RBBM_PERFCOUNTER1_HI` (`0x039A`) across both MMIO register access and PM4 `REG_TO_MEM` packets, used by `vulkan4xenon` for `vkGetQueryPoolResults` timestamps.

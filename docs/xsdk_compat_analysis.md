@@ -36,6 +36,13 @@ additive, with the exception of the regression below.
    Covered by a new vfs unit test. Verified in MKWii: `banner.bin` (29 344 B) and `rksys.dat` are now written.
    Commit `fix(vfs): honor ReplaceIfExists in NtSetInformationFile rename`.
 
+## Fixed after the first report
+
+* **`D1MODE_V_COUNTER` was a constant 960**, so xsdk's late-flip statistics were always 0 and `wait_for_scaler` returned
+  at once. It now follows a 60 Hz raster: lines `0..viewport height-1` over the first 96% of the frame, then a vblank
+  running past the height (up to at least 990). Verified: SMAS logs `line counter reached 722 after 10015 us` /
+  `721 after 12474 us`, CTR360 `721 after 15818 us`; both titles still run. README updated again accordingly.
+
 ## Coverage added
 
 * `instr_lswi`, `instr_lswx`, `instr_stswi`, `instr_stswx`, `instr_mtfsbx` (+ XER byte-count round trip): partial
@@ -54,14 +61,9 @@ additive, with the exception of the regression below.
 
 ## Observed, not changed (needs a decision / hardware to validate)
 
-* **`D1MODE_V_COUNTER` is a constant (960)**, not a progressing raster counter as the README claimed (README corrected).
-  `xsdk` `present.c` uses it to count "late" flips and `display.c` waits for it; with a constant, late-flip statistics are
-  always 0 and `wait_for_scaler` returns at once ("reached 960 after 0 us"). Pacing on Xenia is therefore not
-  representative.
-* **`D1GRPH_CONTROL` tiling bit**: `GraphicsSystem::WriteRegister(0x183B)` computes `is_tiled = bit20` but passes it as the
-  `is_linear` argument of `IssueDirectSwap`, which sets `fetch.tiled = is_linear ? 0 : 1`. The polarity is inverted
-  relative to the variable name; the default register value (bit20 clear) yields a *tiled* fetch. Left as is because the
-  tested xsdk titles render correctly; a direct-framebuffer homebrew that sets bit 20 would be read as linear.
+* **`D1GRPH_CONTROL` tiling bit**: the code computed `is_tiled = bit20` but passed it as `is_linear`. Behaviour was
+  right (the kernel runs with `D1GRPH_CONTROL = 2`, bit 20 clear, and tiled front buffers, so a set bit selects a linear
+  surface) and only the name was inverted; renamed to `is_linear` with a comment. No behaviour change.
 * **Reservations are value-compare based** (`lwarx` caches address+value; `stwcx.` is a `lock cmpxchg`): ABA is
   indistinguishable from "unchanged", plain stores from other threads do not clear the reservation, and a stale
   reservation survives until the next `stwcx.`. Fine for GCC spin-locks/counters; can mis-succeed for pointer-based
